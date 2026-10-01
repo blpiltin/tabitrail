@@ -121,6 +121,12 @@ async function syncWindowLabels(httpTabs, labels) {
   if (changed) await saveLinks(store);
 }
 
+// The digest keeps every link ever saved, not just the tabs open right now.
+function savedTotalNote() {
+  const n = store.links.filter((l) => l.category !== SKIPPED).length;
+  return `Digest holds ${n} saved link${n === 1 ? '' : 's'} in total (including closed tabs).`;
+}
+
 async function scan() {
   setStatus('Scanning open tabs...');
   aiDisabledUntilRescan = false;
@@ -139,9 +145,12 @@ async function scan() {
     forceAIMode = true;
     const byUrl = new Map(store.links.map((l) => [l.url, l]));
     queue = [];
+    const queued = new Set();
     for (const tab of httpTabs) {
       const existing = byUrl.get(tab.url);
       if (existing && existing.category === SKIPPED) continue;
+      if (queued.has(tab.url)) continue; // same URL open in several tabs: classify once
+      queued.add(tab.url);
       queue.push({ id: tab.id, windowId: tab.windowId, windowLabel: windowLabels.get(tab.windowId), url: tab.url, title: tab.title || tab.url });
     }
     reviewIndex = 0;
@@ -150,7 +159,7 @@ async function scan() {
       setStatus('No open tabs to re-categorize (all are permanently skipped).');
       return;
     }
-    setStatus(`Re-categorizing ${queue.length} open tab${queue.length === 1 ? '' : 's'} with AI...`);
+    setStatus(`Re-categorizing ${queue.length} open tab${queue.length === 1 ? '' : 's'} with AI... ${savedTotalNote()}`);
     await renderReview();
     return;
   }
@@ -163,6 +172,7 @@ async function scan() {
 
   for (const tab of httpTabs) {
     if (existingUrls.has(tab.url)) continue;
+    existingUrls.add(tab.url); // same URL open in several tabs/windows: file it once per scan
 
     let groupTitle = null;
     let groupColor = null;
@@ -205,7 +215,7 @@ async function scan() {
   const parts = [];
   if (newGrouped.length) parts.push(`auto-filed ${newGrouped.length} tab${newGrouped.length === 1 ? '' : 's'} from tab groups`);
   if (newUngrouped.length) parts.push(`${newUngrouped.length} new ungrouped tab${newUngrouped.length === 1 ? '' : 's'} to review`);
-  setStatus(parts.length ? parts.join('; ') + '.' : 'No new tabs found.');
+  setStatus((parts.length ? parts.join('; ') + '.' : 'No new tabs found.') + ` Scanned ${httpTabs.length} open tab${httpTabs.length === 1 ? '' : 's'}. ${savedTotalNote()}`);
 
   await renderReview();
 }
@@ -622,11 +632,19 @@ function parseMarkdownDigest(text) {
   return links;
 }
 
+// Each URL is loaded once, even if a digest lists it several times (e.g. a page that was open in many tabs).
+function uniqueByUrl(links) {
+  const seen = new Set();
+  return links.filter((l) => !seen.has(l.url) && seen.add(l.url));
+}
+
 function getActiveLinks() {
-  if (importedLinks) return importedLinks;
-  return store.links
-    .filter((l) => l.category !== SKIPPED)
-    .map((l) => ({ url: l.url, title: l.title, category: l.category, summary: l.summary, window: l.window }));
+  if (importedLinks) return uniqueByUrl(importedLinks);
+  return uniqueByUrl(
+    store.links
+      .filter((l) => l.category !== SKIPPED)
+      .map((l) => ({ url: l.url, title: l.title, category: l.category, summary: l.summary, window: l.window }))
+  );
 }
 
 function getActiveCategories() {
