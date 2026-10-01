@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Tabitrail",
+  "version": "1.0.0",
+  "description": "Corrals your open browser tabs into a categorized link digest, with optional AI-assisted categorization.",
+  "permissions": ["tabs", "tabGroups", "downloads", "storage", "scripting"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Tabitrail — Organize Tabs",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
+}

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tabitrail</title>
+<link rel="icon" type="image/png" href="icons/icon48.png">
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --bg: #ffffff;
+    --muted: #6b7280;
+    --border: #d8dce1;
+    --accent: #2563eb;
+    --danger: #b91c1c;
+    --card-bg: #f7f8fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e6e6e6;
+      --bg: #16181d;
+      --muted: #9aa0aa;
+      --border: #333844;
+      --accent: #5b9dff;
+      --danger: #ff6b6b;
+      --card-bg: #1e2128;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 20px 60px;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .window-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .window-row input[type=text] { max-width: 220px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { width: 64px; height: 64px; border-radius: 12px; }
+  h1 { font-size: 24px; margin: 0; }
+  h2 { font-size: 15px; margin: 24px 0 8px; }
+  .actions button { margin-left: 8px; }
+  button {
+    font: inherit;
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  #status { color: var(--muted); font-size: 13px; margin: 10px 0 18px; min-height: 18px; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+  .progress { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  #cardTitle { margin: 0 0 4px; font-size: 16px; }
+  #cardUrl { display: block; font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 8px; }
+  #cardSummary { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  select, input[type=text], input[type=password] {
+    font: inherit;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--fg);
+    width: 100%;
+    max-width: 320px;
+  }
+  #newCategoryInput { margin-top: 6px; }
+  .card-actions button { margin-right: 8px; margin-top: 4px; }
+  .muted { color: var(--muted); font-weight: normal; font-size: 13px; }
+  .category-row { font-size: 13px; padding: 3px 0; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: normal; }
+  .link-remove { padding: 3px 8px; font-size: 12px; }
+  details summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-top: 10px; }
+  #manageSection { margin-top: 8px; }
+  #settingsSection { margin-top: 18px; }
+  #settingsSection .field { max-width: 420px; }
+  #settingsSection input[type=text], #settingsSection input[type=password] { max-width: 100%; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+  .checkbox-row label { font-size: 13px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+  #aiNote { font-size: 12px; color: var(--accent); margin: 0 0 10px; }
+  .key-row { display: flex; gap: 6px; align-items: center; }
+  .key-row input { flex: 1; }
+  #saveSettingsStatus { font-size: 12px; color: var(--muted); margin-left: 10px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="icons/icon128.png" alt="Tabitrail hamster icon">
+      <h1>Tabitrail</h1>
+    </div>
+    <div class="actions">
+      <button id="scanBtn">Re-scan open tabs</button>
+      <button id="downloadBtn">Download Markdown</button>
+    </div>
+  </header>
+
+  <div id="status"></div>
+
+  <section id="reviewSection" hidden>
+    <div class="progress" id="progress"></div>
+    <div class="card">
+      <h2 id="cardTitle"></h2>
+      <a id="cardUrl" target="_blank" rel="noopener"></a>
+      <p id="cardSummary"></p>
+      <p id="aiNote" hidden></p>
+      <div class="field">
+        <label for="categorySelect">Category</label>
+        <select id="categorySelect"></select>
+        <input id="newCategoryInput" type="text" placeholder="New category name" hidden>
+      </div>
+      <div class="card-actions">
+        <button id="openTabBtn">Open tab</button>
+        <button id="suggestBtn">Suggest with AI</button>
+        <button id="saveBtn" class="primary">Save</button>
+        <button id="skipTempBtn">Skip (ask later)</button>
+        <button id="skipPermBtn">Skip permanently</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="settingsSection">
+    <details>
+      <summary>AI categorization settings</summary>
+      <div class="field">
+        <label for="apiKeyInput">Anthropic API key</label>
+        <div class="key-row">
+          <input id="apiKeyInput" type="password" placeholder="sk-ant-...">
+          <button id="toggleKeyBtn" type="button">Show</button>
+        </div>
+        <p class="hint">Stored locally in this extension's storage, for this Brave profile only. Sent only to api.anthropic.com.</p>
+      </div>
+      <div class="field">
+        <label for="modelInput">Model</label>
+        <input id="modelInput" type="text" placeholder="claude-opus-5">
+        <p class="hint">Default: claude-opus-5. For categorizing many tabs cheaply, try claude-haiku-4-5 instead.</p>
+      </div>
+      <div class="checkbox-row">
+        <input id="autoModeCheckbox" type="checkbox">
+        <label for="autoModeCheckbox">Automatically categorize new tabs with AI (no per-tab prompt unless a new category comes up)</label>
+      </div>
+      <div class="checkbox-row">
+        <input id="recategorizeAllCheckbox" type="checkbox">
+        <label for="recategorizeAllCheckbox">When scanning, also re-categorize tabs already filed or already in a tab group (not just new tabs)</label>
+      </div>
+      <p class="hint" style="margin-top: -8px;">This can change categories you already set. Applies the next time you scan (click the icon, or Re-scan open tabs) and stays on until you turn it off. Permanently-skipped links are left alone.</p>
+      <div class="field">
+        <label for="newCategoryBehaviorSelect">When AI wants to create a new category</label>
+        <select id="newCategoryBehaviorSelect">
+          <option value="ask">Ask me first</option>
+          <option value="auto">Create it automatically</option>
+        </select>
+      </div>
+      <div>
+        <button id="saveSettingsBtn" class="primary">Save settings</button>
+        <span id="saveSettingsStatus"></span>
+      </div>
+    </details>
+  </section>
+
+  <section id="loadSection">
+    <details>
+      <summary>Load tabs from digest</summary>
+      <div class="field">
+        <label>Source</label>
+        <div class="checkbox-row">
+          <input type="radio" name="loadSource" value="current" id="loadSourceCurrent" checked>
+          <label for="loadSourceCurrent">Use current data</label>
+        </div>
+        <div class="checkbox-row">
+          <input type="radio" name="loadSource" value="import" id="loadSourceImport">
+          <label for="loadSourceImport">Import a Markdown digest file</label>
+        </div>
+        <div id="mdFileRow" hidden style="margin-top: 6px;">
+          <input type="file" id="mdFileInput" accept=".md,text/markdown">
+        </div>
+        <p class="hint" id="loadSourceStatus"></p>
+      </div>
+      <div class="checkbox-row">
+        <input id="restoreWindowsCheckbox" type="checkbox" checked>
+        <label for="restoreWindowsCheckbox">Restore tabs into their original windows</label>
+      </div>
+      <p class="hint" style="margin-top: -8px;">Opens a new browser window for each window the links were saved from. Links with no saved window (or from an imported Markdown file) open in the current window. Uncheck to put everything in the current window.</p>
+      <div class="field">
+        <label for="loadCategorySelect">Category</label>
+        <select id="loadCategorySelect"></select>
+      </div>
+      <div class="card-actions">
+        <button id="loadAllBtn" class="primary">Load ALL tabs</button>
+        <button id="loadCategoryBtn">Load selected category</button>
+        <button id="startOneByOneBtn">Load one by one</button>
+      </div>
+      <p id="loadStatus" class="hint"></p>
+
+      <div id="oneByOneSection" class="card" hidden style="margin-top: 14px;">
+        <div class="progress" id="oneByOneProgress"></div>
+        <h2 id="oneByOneTitle" style="margin: 0 0 2px; font-size: 15px;"></h2>
+        <p class="muted" id="oneByOneCategory" style="margin: 0 0 4px;"></p>
+        <a id="oneByOneUrl" target="_blank" rel="noopener" style="display: block; font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 6px;"></a>
+        <p id="oneByOneSummary" class="muted" style="margin: 0 0 12px;"></p>
+        <div class="card-actions">
+          <button id="oneByOneOpenBtn" class="primary">Open this tab</button>
+          <button id="oneByOneSkipBtn">Skip</button>
+          <button id="oneByOneStopBtn">Stop</button>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <section id="manageSection">
+    <h2>Digest <span id="digestCount" class="muted"></span></h2>
+    <div id="categoryList"></div>
+    <details id="windowsDetails">
+      <summary>Windows</summary>
+      <p class="hint">Tabitrail remembers which browser window each link came from. Rename them to something memorable.</p>
+      <div id="windowList"></div>
+    </details>
+    <details>
+      <summary>Manage all links</summary>
+      <table id="linksTable">
+        <thead><tr><th>Title</th><th>Category</th><th></th></tr></thead>
+        <tbody id="linksTableBody"></tbody>
+      </table>
+      <div style="margin-top:10px;">
+        <button id="unskipBtn">Un-skip permanently-skipped links</button>
+        <button id="resetBtn" class="danger">Reset all data</button>
+      </div>
+    </details>
+  </section>
+
+  <script src="organizer.js"></script>
+</body>
+</html>
