@@ -121,9 +121,11 @@ browser or even the whole computer, so Tabitrail protects you:
 - It asks for confirmation above 12 tabs, stating how many tabs and windows
   it will open.
 - It adds a stronger warning above 150 tabs, and refuses to open more than
-  300 in one go. Load one window or category at a time instead.
-- It opens tabs in small batches with short pauses, shows progress, and has a
-  **Stop loading** button.
+  1,000 tabs or 20 windows in one go. Load one window or category at a time
+  instead.
+- It opens tabs in small batches with short pauses, waits a couple of seconds
+  between one window and the next, shows progress, and has a **Stop loading**
+  button that takes effect immediately.
 - If you close a window it's filling, the load stops instead of opening
   replacement windows.
 

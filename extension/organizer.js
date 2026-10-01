@@ -772,16 +772,20 @@ function selectedLinks() {
 // capped, throttled in batches, abortable, and stop by themselves if the user closes a destination window.
 const LOAD_CONFIRM_OVER = 12; // ask before opening more tabs than this
 const LOAD_WARN_OVER = 150; // add a stronger warning above this
-const LOAD_HARD_LIMIT = 300; // refuse to open more tabs than this in one go
+const LOAD_HARD_LIMIT = 1000; // refuse to open more tabs than this in one go
+const LOAD_MAX_WINDOWS = 20; // refuse to open more windows than this in one go
 const BATCH_SIZE = 10; // pause after this many tabs
 const BATCH_PAUSE_MS = 400;
-const WINDOW_PAUSE_MS = 300;
+const WINDOW_PAUSE_MS = 2500; // wait between finishing one window and starting the next
 const MAX_CONSECUTIVE_FAILURES = 5;
 
 let loadRunning = false;
 let loadAbort = false; // false, or a reason string
 const loadWindowIds = new Set();
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Sleeps in short slices so the Stop button (or a closed window) takes effect immediately.
+async function pause(ms) {
+  for (let waited = 0; waited < ms && !loadAbort; waited += 100) await new Promise((r) => setTimeout(r, 100));
+}
 
 // Closing one of the windows being filled means the user wants out: stop, don't re-create it.
 if (chrome.windows && chrome.windows.onRemoved) {
@@ -828,22 +832,30 @@ async function openLinksGrouped(links, onProgress) {
   let opened = 0;
   let failures = 0;
 
+  let firstLabel = true;
   outer: for (const label of labels) {
+    if (!firstLabel) {
+      if (onProgress) onProgress(opened, links.length, 'waiting before the next window');
+      await pause(WINDOW_PAUSE_MS);
+      if (loadAbort) break;
+    }
+    firstLabel = false;
     const inWindow = links.filter((l) => labelOf(l) === label);
     const cats = [...new Set(inWindow.map((l) => l.category))].sort((a, b) => a.localeCompare(b));
     for (const cat of cats) {
       const tabIds = [];
+      let groupWindowId;
       for (const l of inWindow.filter((x) => x.category === cat)) {
         if (loadAbort) break;
         const isNewWindow = label && winMap[label] === undefined;
         try {
           const tab = await openTabInWindow(l.url, label, winMap);
           tabIds.push(tab.id);
+          if (groupWindowId === undefined) groupWindowId = tab.windowId;
           opened++;
           failures = 0;
           if (onProgress) onProgress(opened, links.length);
-          if (isNewWindow) await sleep(WINDOW_PAUSE_MS);
-          else if (opened % BATCH_SIZE === 0) await sleep(BATCH_PAUSE_MS);
+          if (opened % BATCH_SIZE === 0) await pause(BATCH_PAUSE_MS);
         } catch (e) {
           if (label && winMap[label] !== undefined && !(await windowExists(winMap[label]))) {
             loadAbort = loadAbort || 'a window being filled was closed';
@@ -855,7 +867,9 @@ async function openLinksGrouped(links, onProgress) {
       }
       if (tabIds.length) {
         try {
-          const groupId = await chrome.tabs.group({ tabIds });
+          // Without createProperties.windowId Chrome puts the new group in the CURRENT window, which would
+          // drag these tabs out of the window they were just opened in.
+          const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: groupWindowId } });
           await chrome.tabGroups.update(groupId, { title: cat, color: colorForCategory(cat, allCats) });
         } catch (e) {
           // tabs are still open even if grouping failed
@@ -892,9 +906,10 @@ async function runLoad(links) {
   const wins = new Set(links.map(resolve).filter(Boolean)).size;
   const moved = links.filter((l) => l.window && resolve(l) && resolve(l) !== l.window).length;
   const movedNote = moved ? `\n\n${moved} of ${links.length} links will open in a different window than they were saved in, to keep each category together.` : '';
-  if (links.length > LOAD_HARD_LIMIT) {
+  if (links.length > LOAD_HARD_LIMIT || wins > LOAD_MAX_WINDOWS) {
     alert(
-      `That's ${links.length} tabs${wins ? ` in ${wins} windows` : ''} — too many to open at once; it could freeze your browser or computer.\n\n` +
+      `That's ${links.length} tabs${wins ? ` in ${wins} windows` : ''} — more than Tabitrail will open at once ` +
+        `(limit: ${LOAD_HARD_LIMIT} tabs and ${LOAD_MAX_WINDOWS} windows), because it could freeze your browser or computer.\n\n` +
         'Pick a single window or category above (or use "Load one by one"), then try again.'
     );
     return;
@@ -909,7 +924,7 @@ async function runLoad(links) {
   setLoadStatus(`Opening tabs... 0 / ${links.length}`);
   let result;
   try {
-    result = await openLinksGrouped(links, (done, total) => setLoadStatus(`Opening tabs... ${done} / ${total}`));
+    result = await openLinksGrouped(links, (done, total, note) => setLoadStatus(`Opening tabs... ${done} / ${total}${note ? ` (${note})` : ''}`));
   } catch (e) {
     result = { opened: 0, windows: 0, total: links.length, stopped: `error: ${e.message}` };
   } finally {
@@ -968,7 +983,7 @@ async function oneByOneOpen() {
     const key = `${label || ''}||${link.category}`;
     let groupId = oneByOneGroupMap[key];
     if (groupId === undefined) {
-      groupId = await chrome.tabs.group({ tabIds: [tab.id] });
+      groupId = await chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId: tab.windowId } });
       await chrome.tabGroups.update(groupId, { title: link.category, color: colorForCategory(link.category, getActiveCategories()) });
       oneByOneGroupMap[key] = groupId;
     } else {
