@@ -102,13 +102,24 @@ browser profile or machine.
   doesn't have this extension's data. Importing only affects what this
   section loads; it doesn't merge anything into your saved links.
 - **Load ALL tabs** opens every link in the active source.
-- **Load selected category** opens only the links in the category picked
-  from the dropdown (or everything, if "All categories" is selected).
+- **Load selection** opens the links matching the **Category** and **Window**
+  dropdowns (either can be left on "All").
 - **Load one by one** steps through the selection one link at a time with
   **Open this tab** / **Skip** / **Stop**, so you can cherry-pick rather
   than opening everything at once.
 
-All three recreate your categories as actual Brave tab groups as tabs are
+**Safety limits.** Opening hundreds of tabs and windows at once can freeze a
+browser or even the whole computer, so Tabitrail protects you:
+- It asks for confirmation above 12 tabs, stating how many tabs and windows
+  it will open.
+- It adds a stronger warning above 150 tabs, and refuses to open more than
+  300 in one go. Load one window or category at a time instead.
+- It opens tabs in small batches with short pauses, shows progress, and has a
+  **Stop loading** button.
+- If you close a window it's filling, the load stops instead of opening
+  replacement windows.
+
+All of these recreate your categories as actual Brave tab groups as tabs are
 opened (a new tab group per category, colored and titled to match). Opening
 more than 12 tabs at once asks for confirmation first.
 
@@ -122,12 +133,23 @@ window and the links are regrouped inside it. A tab group can't span windows,
 so a category that was split across two windows becomes two groups with the
 same name.
 
-- Rename windows under **Digest → Windows** (e.g. "Work", "Research").
+- **Keep each category in one window** (on by default): categories named like
+  `Home: Finances` and `Home: Kids` all open in one window called "Home", each
+  category as a tab group inside it. Categories without a `Prefix:` open in the
+  window that held most of their links. The confirmation tells you how many
+  links will open somewhere other than where they were saved. Turn it off to
+  open every link in the exact window it came from.
+- Rename windows under **Digest → Windows** (e.g. "Work", "Research"). Each
+  window shows its biggest categories and a **Show links** list, so you can
+  recognize it before naming it.
 - Untick **Restore tabs into their original windows** (under *Load tabs from
   digest*) to open everything in the current window instead.
 - If a link is open in a different window on a later scan, the latest scan wins.
-- Links without a saved window, and imported Markdown digests (which don't
-  record windows), open in the current window. Incognito windows are not seen.
+- The downloaded Markdown digest records each link's window in a hidden
+  comment (`<!-- window: Name -->`, invisible when the file is rendered), so
+  windows are restored when you import a digest too. Digests from earlier
+  versions have no window info and open in the current window, as do links
+  with no saved window. Incognito windows are not seen.
 
 ## Where the data lives
 

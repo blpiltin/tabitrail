@@ -48,6 +48,7 @@ async function loadSettings() {
     newCategoryBehavior: 'ask',
     recategorizeAllOnScan: false,
     restoreWindows: true,
+    keepCategoriesTogether: true,
     ...(data.tabitrailSettings || {})
   };
 }
@@ -534,7 +535,9 @@ function generateMarkdown() {
     const links = byCategory[c].slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''));
     for (const l of links) {
       const desc = l.summary ? ` — ${l.summary}` : '';
-      out += `- [${l.title || l.url}](${l.url})${desc}\n`;
+      // Hidden in rendered Markdown; read back by parseMarkdownDigest so windows survive export/import.
+      const win = l.window ? ` <!-- window: ${l.window.replace(/--+/g, '-').replace(/[<>]/g, '')} -->` : '';
+      out += `- [${l.title || l.url}](${l.url})${desc}${win}\n`;
     }
     out += `\n`;
   }
@@ -556,7 +559,14 @@ function parseMarkdownDigest(text) {
   let currentCategory = null;
   const headingRe = /^##\s+(.+)$/;
   const itemRe = /^-\s+\[(.*?)\]\((.*?)\)(?:\s+—\s+(.*))?$/;
-  for (const line of lines) {
+  const windowRe = /\s*<!--\s*window:\s*(.*?)\s*-->\s*$/;
+  for (let line of lines) {
+    let win = null;
+    const wm = line.match(windowRe);
+    if (wm) {
+      win = wm[1] || null;
+      line = line.replace(windowRe, '');
+    }
     const h = line.match(headingRe);
     if (h) {
       currentCategory = h[1].trim();
@@ -564,7 +574,7 @@ function parseMarkdownDigest(text) {
     }
     const m = line.match(itemRe);
     if (m && currentCategory) {
-      links.push({ title: m[1].trim(), url: m[2].trim(), category: currentCategory, summary: m[3] ? m[3].trim() : null });
+      links.push({ title: m[1].trim(), url: m[2].trim(), category: currentCategory, summary: m[3] ? m[3].trim() : null, window: win });
     }
   }
   return links;
@@ -590,10 +600,39 @@ function setLoadStatus(text) {
   document.getElementById('loadStatus').textContent = text;
 }
 
+// "Home: Finances" -> "Home". Categories named "Prefix: Name" belong to the workspace/window called Prefix.
+function primaryOf(category) {
+  const m = (category || '').match(/^([^:]{1,40}):\s*\S/);
+  return m ? m[1].trim() : null;
+}
+
+// Returns a function mapping a link to the window label it should open in (null = the current window).
+// - "Restore windows" off: everything opens in the current window.
+// - "Keep each category in one window" off: each link opens in the window it was saved from.
+// - On (default): "Prefix: Name" categories all go to one window named Prefix, with the categories as tab
+//   groups inside it; categories without a prefix go to the window that held most of their links.
+// Always computed from ALL active links so loading a subset behaves the same as loading everything.
+function windowResolver(allLinks) {
+  if (settings.restoreWindows === false) return () => null;
+  if (settings.keepCategoriesTogether === false) return (l) => l.window || null;
+  const counts = {};
+  for (const l of allLinks) {
+    if (!l.window || primaryOf(l.category)) continue;
+    counts[l.category] = counts[l.category] || {};
+    counts[l.category][l.window] = (counts[l.category][l.window] || 0) + 1;
+  }
+  const home = {};
+  for (const [cat, byWin] of Object.entries(counts)) {
+    home[cat] = Object.entries(byWin).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], undefined, { numeric: true }))[0][0];
+  }
+  return (l) => primaryOf(l.category) || home[l.category] || l.window || null;
+}
+
 function populateLoadCategorySelect() {
-  const select = document.getElementById('loadCategorySelect');
   const links = getActiveLinks();
   const cats = getActiveCategories();
+  const select = document.getElementById('loadCategorySelect');
+  const prevCat = select.value;
   select.innerHTML = '';
   const allOpt = document.createElement('option');
   allOpt.value = '__all__';
@@ -606,44 +645,134 @@ function populateLoadCategorySelect() {
     opt.textContent = `${c} (${count})`;
     select.appendChild(opt);
   }
+  if ([...select.options].some((o) => o.value === prevCat)) select.value = prevCat;
+
+  const winSelect = document.getElementById('loadWindowSelect');
+  const prevWin = winSelect.value;
+  winSelect.innerHTML = '';
+  const allWin = document.createElement('option');
+  allWin.value = '__all__';
+  allWin.textContent = 'All windows';
+  winSelect.appendChild(allWin);
+  const resolve = windowResolver(links);
+  const winCounts = {};
+  let noWindow = 0;
+  for (const l of links) {
+    const w = resolve(l);
+    if (w) winCounts[w] = (winCounts[w] || 0) + 1;
+    else noWindow++;
+  }
+  for (const w of Object.keys(winCounts).sort((x, y) => x.localeCompare(y, undefined, { numeric: true }))) {
+    const opt = document.createElement('option');
+    opt.value = w;
+    opt.textContent = `${w} (${winCounts[w]})`;
+    winSelect.appendChild(opt);
+  }
+  if (noWindow && Object.keys(winCounts).length) {
+    const opt = document.createElement('option');
+    opt.value = '__none__';
+    opt.textContent = `(current window) (${noWindow})`;
+    winSelect.appendChild(opt);
+  }
+  if ([...winSelect.options].some((o) => o.value === prevWin)) winSelect.value = prevWin;
+}
+
+// Links matching both the category and window pickers.
+function selectedLinks() {
+  const cat = document.getElementById('loadCategorySelect').value;
+  const win = document.getElementById('loadWindowSelect').value;
+  const all = getActiveLinks();
+  const resolve = windowResolver(all);
+  return all.filter((l) => {
+    const w = resolve(l);
+    return (cat === '__all__' || l.category === cat) && (win === '__all__' || (win === '__none__' ? !w : w === win));
+  });
+}
+
+// --- Opening tabs: safety limits ---
+// Opening hundreds of tabs/windows at once can freeze the browser or the whole computer, so loads are
+// capped, throttled in batches, abortable, and stop by themselves if the user closes a destination window.
+const LOAD_CONFIRM_OVER = 12; // ask before opening more tabs than this
+const LOAD_WARN_OVER = 150; // add a stronger warning above this
+const LOAD_HARD_LIMIT = 300; // refuse to open more tabs than this in one go
+const BATCH_SIZE = 10; // pause after this many tabs
+const BATCH_PAUSE_MS = 400;
+const WINDOW_PAUSE_MS = 300;
+const MAX_CONSECUTIVE_FAILURES = 5;
+
+let loadRunning = false;
+let loadAbort = false; // false, or a reason string
+const loadWindowIds = new Set();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Closing one of the windows being filled means the user wants out: stop, don't re-create it.
+if (chrome.windows && chrome.windows.onRemoved) {
+  chrome.windows.onRemoved.addListener((id) => {
+    if (loadRunning && loadWindowIds.has(id) && !loadAbort) loadAbort = 'a window being filled was closed';
+  });
+}
+
+async function windowExists(id) {
+  try {
+    await chrome.windows.get(id);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // Opens a tab in the window saved for this link (creating that window on first use).
 // A null label means "the current window". winMap maps label -> window id for this load.
-async function openTabInWindow(url, label, winMap) {
+// recreate=false (bulk loads): if the window is gone this throws instead of opening a replacement.
+async function openTabInWindow(url, label, winMap, { recreate = false } = {}) {
   if (!label) return chrome.tabs.create({ url, active: false });
   if (winMap[label] !== undefined) {
     try {
       return await chrome.tabs.create({ url, windowId: winMap[label], active: false });
     } catch (e) {
-      delete winMap[label]; // window was closed mid-load; start a fresh one
+      if (!recreate) throw e;
+      delete winMap[label];
     }
   }
   const win = await chrome.windows.create({ url, focused: false });
   winMap[label] = win.id;
-  return win.tabs[0];
+  loadWindowIds.add(win.id);
+  return win.tabs && win.tabs[0] ? win.tabs[0] : (await chrome.tabs.query({ windowId: win.id }))[0];
 }
 
-// Returns the number of browser windows the links were opened into.
-async function openLinksGrouped(links) {
+// Returns { opened, windows, total, stopped } where stopped is null or the reason the load ended early.
+async function openLinksGrouped(links, onProgress) {
   settings = await loadSettings();
-  const useWindows = settings.restoreWindows !== false;
   const allCats = [...new Set(links.map((l) => l.category))].sort((a, b) => a.localeCompare(b));
-  const labelOf = (l) => (useWindows && l.window ? l.window : null);
+  const labelOf = windowResolver(getActiveLinks());
   const labels = [...new Set(links.map(labelOf))].sort((a, b) => (a === null ? -1 : b === null ? 1 : a.localeCompare(b, undefined, { numeric: true })));
   const winMap = {};
+  let opened = 0;
+  let failures = 0;
 
-  for (const label of labels) {
+  outer: for (const label of labels) {
     const inWindow = links.filter((l) => labelOf(l) === label);
     const cats = [...new Set(inWindow.map((l) => l.category))].sort((a, b) => a.localeCompare(b));
     for (const cat of cats) {
       const tabIds = [];
       for (const l of inWindow.filter((x) => x.category === cat)) {
+        if (loadAbort) break;
+        const isNewWindow = label && winMap[label] === undefined;
         try {
           const tab = await openTabInWindow(l.url, label, winMap);
           tabIds.push(tab.id);
+          opened++;
+          failures = 0;
+          if (onProgress) onProgress(opened, links.length);
+          if (isNewWindow) await sleep(WINDOW_PAUSE_MS);
+          else if (opened % BATCH_SIZE === 0) await sleep(BATCH_PAUSE_MS);
         } catch (e) {
-          // skip links the browser refuses to open (e.g. malformed URL)
+          if (label && winMap[label] !== undefined && !(await windowExists(winMap[label]))) {
+            loadAbort = loadAbort || 'a window being filled was closed';
+          } else if (++failures >= MAX_CONSECUTIVE_FAILURES) {
+            loadAbort = loadAbort || 'too many tabs failed to open in a row';
+          }
+          // otherwise: skip links the browser refuses to open (e.g. malformed URL)
         }
       }
       if (tabIds.length) {
@@ -654,49 +783,77 @@ async function openLinksGrouped(links) {
           // tabs are still open even if grouping failed
         }
       }
+      if (loadAbort) break outer;
     }
   }
-  return Object.keys(winMap).length;
+  return { opened, windows: Object.keys(winMap).length, total: links.length, stopped: loadAbort || null };
 }
 
 function windowsNote(n) {
   return n > 0 ? ` in ${n} new window${n === 1 ? '' : 's'}` : '';
 }
 
-async function loadAll() {
-  const links = getActiveLinks();
-  if (!links.length) {
-    alert('No links to load from the current source.');
-    return;
+function setLoading(on) {
+  loadRunning = on;
+  if (on) {
+    loadAbort = false;
+    loadWindowIds.clear();
   }
-  if (links.length > 12 && !confirm(`This will open ${links.length} tabs across ${getActiveCategories().length} groups. Continue?`)) {
-    return;
-  }
-  setLoadStatus(`Opening ${links.length} tabs...`);
-  const wins = await openLinksGrouped(links);
-  setLoadStatus(`Opened ${links.length} tabs across ${getActiveCategories().length} groups${windowsNote(wins)}.`);
+  for (const id of ['loadAllBtn', 'loadCategoryBtn', 'startOneByOneBtn']) document.getElementById(id).disabled = on;
+  document.getElementById('stopLoadBtn').hidden = !on;
 }
 
-async function loadSelectedCategory() {
-  const value = document.getElementById('loadCategorySelect').value;
-  const links = getActiveLinks();
-  const target = value === '__all__' ? links : links.filter((l) => l.category === value);
-  if (!target.length) {
-    alert('No links in that category.');
+async function runLoad(links) {
+  if (loadRunning) return;
+  if (!links.length) {
+    alert('No links match that selection.');
     return;
   }
-  if (target.length > 12 && !confirm(`This will open ${target.length} tabs. Continue?`)) return;
-  setLoadStatus(`Opening ${target.length} tabs...`);
-  const wins = await openLinksGrouped(target);
-  setLoadStatus(`Opened ${target.length} tabs${windowsNote(wins)}.`);
+  settings = await loadSettings();
+  const resolve = windowResolver(getActiveLinks());
+  const wins = new Set(links.map(resolve).filter(Boolean)).size;
+  const moved = links.filter((l) => l.window && resolve(l) && resolve(l) !== l.window).length;
+  const movedNote = moved ? `\n\n${moved} of ${links.length} links will open in a different window than they were saved in, to keep each category together.` : '';
+  if (links.length > LOAD_HARD_LIMIT) {
+    alert(
+      `That's ${links.length} tabs${wins ? ` in ${wins} windows` : ''} — too many to open at once; it could freeze your browser or computer.\n\n` +
+        'Pick a single window or category above (or use "Load one by one"), then try again.'
+    );
+    return;
+  }
+  if (
+    links.length > LOAD_CONFIRM_OVER &&
+    !confirm(`This will open ${links.length} tabs${wins ? ` in ${wins} new window${wins === 1 ? '' : 's'}` : ''}. Continue?${movedNote}${links.length > LOAD_WARN_OVER ? '\n\nThat is a lot of tabs and may make your browser slow for a while. Consider loading one category at a time.' : ''}\n\nYou can press "Stop loading" at any time.`)
+  ) {
+    return;
+  }
+  setLoading(true);
+  setLoadStatus(`Opening tabs... 0 / ${links.length}`);
+  let result;
+  try {
+    result = await openLinksGrouped(links, (done, total) => setLoadStatus(`Opening tabs... ${done} / ${total}`));
+  } catch (e) {
+    result = { opened: 0, windows: 0, total: links.length, stopped: `error: ${e.message}` };
+  } finally {
+    setLoading(false);
+  }
+  setLoadStatus(
+    `Opened ${result.opened} of ${result.total} tabs${windowsNote(result.windows)}.` + (result.stopped ? ` Stopped early: ${result.stopped}.` : '')
+  );
+}
+
+function loadAll() {
+  return runLoad(getActiveLinks());
+}
+
+function loadSelectedCategory() {
+  return runLoad(selectedLinks());
 }
 
 function startOneByOne() {
-  const value = document.getElementById('loadCategorySelect').value;
-  const links = getActiveLinks();
-  const target = (value === '__all__' ? links : links.filter((l) => l.category === value)).slice();
+  const target = selectedLinks().slice();
   if (!target.length) {
-    alert('No links in that category.');
+    alert('No links match that selection.');
     return;
   }
   oneByOneQueue = target;
@@ -718,7 +875,7 @@ function renderOneByOne() {
   const link = oneByOneQueue[oneByOneIndex];
   document.getElementById('oneByOneProgress').textContent = `${oneByOneIndex + 1} / ${oneByOneQueue.length}`;
   document.getElementById('oneByOneTitle').textContent = link.title || link.url;
-  document.getElementById('oneByOneCategory').textContent = link.category + (link.window && settings.restoreWindows !== false ? ` · ${link.window}` : '');
+  document.getElementById('oneByOneCategory').textContent = link.category + (windowResolver(getActiveLinks())(link) ? ` · ${windowResolver(getActiveLinks())(link)}` : '');
   const a = document.getElementById('oneByOneUrl');
   a.textContent = link.url;
   a.href = link.url;
@@ -728,8 +885,8 @@ function renderOneByOne() {
 async function oneByOneOpen() {
   const link = oneByOneQueue[oneByOneIndex];
   try {
-    const label = settings.restoreWindows !== false && link.window ? link.window : null;
-    const tab = await openTabInWindow(link.url, label, oneByOneWindowMap);
+    const label = windowResolver(getActiveLinks())(link);
+    const tab = await openTabInWindow(link.url, label, oneByOneWindowMap, { recreate: true });
     const key = `${label || ''}||${link.category}`;
     let groupId = oneByOneGroupMap[key];
     if (groupId === undefined) {
@@ -822,12 +979,12 @@ function renderManage() {
 function renderWindowList() {
   const listEl = document.getElementById('windowList');
   listEl.innerHTML = '';
-  const counts = {};
+  const byWindow = {};
   for (const l of store.links) {
     if (l.category === SKIPPED || !l.window) continue;
-    counts[l.window] = (counts[l.window] || 0) + 1;
+    (byWindow[l.window] = byWindow[l.window] || []).push(l);
   }
-  const names = Object.keys(counts).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const names = Object.keys(byWindow).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   if (!names.length) {
     const p = document.createElement('p');
     p.className = 'hint';
@@ -836,14 +993,18 @@ function renderWindowList() {
     return;
   }
   for (const name of names) {
+    const links = byWindow[name];
+    const item = document.createElement('div');
+    item.className = 'window-item';
+
     const row = document.createElement('div');
     row.className = 'window-row';
     const input = document.createElement('input');
     input.type = 'text';
     input.value = name;
     const count = document.createElement('span');
-    count.className = 'muted';
-    count.textContent = `${counts[name]} link${counts[name] === 1 ? '' : 's'}`;
+    count.className = 'muted window-count';
+    count.textContent = `${links.length} link${links.length === 1 ? '' : 's'}`;
     const btn = document.createElement('button');
     btn.textContent = 'Rename';
     btn.addEventListener('click', () => renameWindow(name, input.value));
@@ -853,7 +1014,44 @@ function renderWindowList() {
     row.appendChild(input);
     row.appendChild(count);
     row.appendChild(btn);
-    listEl.appendChild(row);
+    item.appendChild(row);
+
+    // Summary so a window can be recognized before it's renamed: its biggest categories...
+    const catCounts = {};
+    for (const l of links) catCounts[l.category] = (catCounts[l.category] || 0) + 1;
+    const ranked = Object.entries(catCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const top = ranked.slice(0, 3).map(([c, n]) => `${c} (${n})`).join(', ');
+    const summary = document.createElement('p');
+    summary.className = 'hint window-summary';
+    summary.textContent = `Mostly: ${top}${ranked.length > 3 ? `, +${ranked.length - 3} more` : ''}`;
+    item.appendChild(summary);
+
+    // ...and the actual links, one click away.
+    const details = document.createElement('details');
+    details.className = 'window-links';
+    const dsum = document.createElement('summary');
+    dsum.textContent = 'Show links';
+    details.appendChild(dsum);
+    const ul = document.createElement('ul');
+    const sorted = links.slice().sort((x, y) => x.category.localeCompare(y.category) || (x.title || '').localeCompare(y.title || ''));
+    for (const l of sorted) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = l.url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = l.title || l.url;
+      const cat = document.createElement('span');
+      cat.className = 'muted';
+      cat.textContent = ` — ${l.category}`;
+      li.appendChild(a);
+      li.appendChild(cat);
+      ul.appendChild(li);
+    }
+    details.appendChild(ul);
+    item.appendChild(details);
+
+    listEl.appendChild(item);
   }
 }
 
@@ -895,6 +1093,7 @@ function populateSettingsForm(s) {
   document.getElementById('autoModeCheckbox').checked = !!s.autoMode;
   document.getElementById('recategorizeAllCheckbox').checked = !!s.recategorizeAllOnScan;
   document.getElementById('restoreWindowsCheckbox').checked = s.restoreWindows !== false;
+  document.getElementById('keepTogetherCheckbox').checked = s.keepCategoriesTogether !== false;
   document.getElementById('newCategoryBehaviorSelect').value = s.newCategoryBehavior === 'auto' ? 'auto' : 'ask';
 }
 
@@ -905,6 +1104,7 @@ async function saveSettingsFromForm() {
     autoMode: document.getElementById('autoModeCheckbox').checked,
     recategorizeAllOnScan: document.getElementById('recategorizeAllCheckbox').checked,
     restoreWindows: document.getElementById('restoreWindowsCheckbox').checked,
+    keepCategoriesTogether: document.getElementById('keepTogetherCheckbox').checked,
     newCategoryBehavior: document.getElementById('newCategoryBehaviorSelect').value
   };
   await saveSettings(newSettings);
@@ -930,14 +1130,20 @@ document.getElementById('categorySelect').addEventListener('change', (e) => {
   if (e.target.value === '__new__') document.getElementById('newCategoryInput').focus();
 });
 document.getElementById('saveSettingsBtn').addEventListener('click', saveSettingsFromForm);
-document.getElementById('restoreWindowsCheckbox').addEventListener('change', async (e) => {
-  settings = await loadSettings();
-  settings.restoreWindows = e.target.checked;
-  await saveSettings(settings);
-});
+for (const [id, key] of [['restoreWindowsCheckbox', 'restoreWindows'], ['keepTogetherCheckbox', 'keepCategoriesTogether']]) {
+  document.getElementById(id).addEventListener('change', async (e) => {
+    settings = await loadSettings();
+    settings[key] = e.target.checked;
+    await saveSettings(settings);
+    populateLoadCategorySelect(); // the Window picker depends on both options
+  });
+}
 document.getElementById('loadAllBtn').addEventListener('click', loadAll);
 document.getElementById('loadCategoryBtn').addEventListener('click', loadSelectedCategory);
 document.getElementById('startOneByOneBtn').addEventListener('click', startOneByOne);
+document.getElementById('stopLoadBtn').addEventListener('click', () => {
+  if (loadRunning) loadAbort = 'you pressed Stop';
+});
 document.getElementById('oneByOneOpenBtn').addEventListener('click', oneByOneOpen);
 document.getElementById('oneByOneSkipBtn').addEventListener('click', oneByOneSkip);
 document.getElementById('oneByOneStopBtn').addEventListener('click', oneByOneStop);
@@ -980,6 +1186,7 @@ async function init() {
   renderManage();
   settings = await loadSettings();
   populateSettingsForm(settings);
+  if (!document.getElementById('loadSourceImport').checked) populateLoadCategorySelect();
   await scan();
 }
 

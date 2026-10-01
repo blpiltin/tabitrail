@@ -36,8 +36,13 @@
     padding: 24px 20px 60px;
   }
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .window-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .window-item { margin: 10px 0 14px; }
+  .window-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; }
   .window-row input[type=text] { max-width: 220px; }
+  .window-count { min-width: 64px; }
+  .window-summary { margin: 0 0 2px; }
+  .window-links ul { margin: 4px 0 0; padding-left: 20px; font-size: 13px; }
+  .window-links li { margin: 2px 0; }
   .brand { display: flex; align-items: center; gap: 12px; }
   .brand img { width: 64px; height: 64px; border-radius: 12px; }
   h1 { font-size: 24px; margin: 0; }
@@ -184,10 +189,12 @@
           <input type="radio" name="loadSource" value="current" id="loadSourceCurrent" checked>
           <label for="loadSourceCurrent">Use current data</label>
         </div>
+        <p class="hint" style="margin: 0 0 6px 26px;">Everything Tabitrail has saved so far, across all your scans (not just the last one) — closed tabs included, until you remove them. Already-open tabs will open again.</p>
         <div class="checkbox-row">
           <input type="radio" name="loadSource" value="import" id="loadSourceImport">
           <label for="loadSourceImport">Import a Markdown digest file</label>
         </div>
+        <p class="hint" style="margin: 0 0 6px 26px;">Only the links in a digest file you pick; your saved data isn't changed.</p>
         <div id="mdFileRow" hidden style="margin-top: 6px;">
           <input type="file" id="mdFileInput" accept=".md,text/markdown">
         </div>
@@ -195,17 +202,26 @@
       </div>
       <div class="checkbox-row">
         <input id="restoreWindowsCheckbox" type="checkbox" checked>
-        <label for="restoreWindowsCheckbox">Restore tabs into their original windows</label>
+        <label for="restoreWindowsCheckbox">Restore tabs into separate windows</label>
       </div>
-      <p class="hint" style="margin-top: -8px;">Opens a new browser window for each window the links were saved from. Links with no saved window (or from an imported Markdown file) open in the current window. Uncheck to put everything in the current window.</p>
+      <div class="checkbox-row">
+        <input id="keepTogetherCheckbox" type="checkbox" checked>
+        <label for="keepTogetherCheckbox">Keep each category in one window</label>
+      </div>
+      <p class="hint" style="margin-top: -8px;">Categories named like "Home: Finances" and "Home: Kids" share one window called "Home", with each category as a tab group inside it. Other categories go to the window that held most of their links. Uncheck "Keep each category in one window" to open each link in the exact window it was saved from, or uncheck "Restore tabs into separate windows" to open everything in the current window.</p>
       <div class="field">
         <label for="loadCategorySelect">Category</label>
         <select id="loadCategorySelect"></select>
       </div>
+      <div class="field">
+        <label for="loadWindowSelect">Window</label>
+        <select id="loadWindowSelect"></select>
+      </div>
       <div class="card-actions">
         <button id="loadAllBtn" class="primary">Load ALL tabs</button>
-        <button id="loadCategoryBtn">Load selected category</button>
+        <button id="loadCategoryBtn">Load selection</button>
         <button id="startOneByOneBtn">Load one by one</button>
+        <button id="stopLoadBtn" class="danger" hidden>Stop loading</button>
       </div>
       <p id="loadStatus" class="hint"></p>
 
