@@ -89,6 +89,14 @@ previously marked "skip permanently." This stays on for every scan until
 you uncheck it, and since it can reshuffle categories you already set by
 hand, only turn it on when you actually want that.
 
+**It follows your naming pattern.** The AI is shown your existing categories
+and told to name any new category in the same style. If yours look like
+`Home: Finances` / `Code: Tools`, a new one should come back as, say,
+`Home: Cooking`, reusing one of your prefixes where it fits. Its answer is
+tidied to match your exact prefix spelling. When you type a new category
+yourself and your categories use prefixes, the review card offers them as
+one-click buttons.
+
 ## Loading tabs back from the digest
 
 Open **Load tabs from digest** on the organizer page to reopen links —
@@ -135,8 +143,9 @@ same name.
 
 - **Keep each category in one window** (on by default): categories named like
   `Home: Finances` and `Home: Kids` all open in one window called "Home", each
-  category as a tab group inside it. Categories without a `Prefix:` open in the
-  window that held most of their links. The confirmation tells you how many
+  category as a tab group inside it. Categories without a `Prefix:` open in a
+  window called "Other" (if most of your categories use prefixes), or otherwise in
+  the window that held most of their links. The confirmation tells you how many
   links will open somewhere other than where they were saved. Turn it off to
   open every link in the exact window it came from.
 - Rename windows under **Digest → Windows** (e.g. "Work", "Research"). Each

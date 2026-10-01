@@ -374,6 +374,35 @@ function renderManualCard(tab, aiSuggestion) {
     newInput.hidden = categories.length > 0;
     newInput.value = '';
   }
+  updatePrefixHint();
+}
+
+// If the user's categories follow a "Prefix: Name" pattern, offer their prefixes as one-click buttons
+// whenever a new category name is being typed without one.
+function updatePrefixHint() {
+  const hint = document.getElementById('prefixHint');
+  const input = document.getElementById('newCategoryInput');
+  const pattern = prefixPattern(categories);
+  const value = input.value.trim();
+  hint.innerHTML = '';
+  if (input.hidden || !pattern.active || primaryOf(value)) {
+    hint.hidden = true;
+    return;
+  }
+  hint.hidden = false;
+  hint.appendChild(document.createTextNode('Your categories look like "Prefix: Name". Add a prefix: '));
+  for (const p of pattern.prefixes.slice(0, 8)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'prefix-chip';
+    b.textContent = p;
+    b.addEventListener('click', () => {
+      input.value = `${p}: ${value}`;
+      input.focus();
+      updatePrefixHint();
+    });
+    hint.appendChild(b);
+  }
 }
 
 async function suggestWithAI() {
@@ -417,10 +446,14 @@ async function classifyWithAI(tab, existingCategories) {
     'You are a categorization assistant for a personal browser-tab organizer. Given a webpage\'s title, URL, ' +
     'and summary, decide which category it belongs to. If it clearly fits one of the user\'s existing categories, ' +
     'return that exact category name with isNew set to false. If none of the existing categories fit well, ' +
-    'propose a new short category name (Title Case, 1-3 words) and set isNew to true.';
+    'propose a new category and set isNew to true. Before naming it, study the existing category names for a ' +
+    'naming pattern: for example a shared "Prefix: Name" structure (like "Home: Finances"), or consistent ' +
+    'capitalization and length. If there is a pattern, name the new category in exactly the same pattern, reusing ' +
+    'one of the existing prefixes when one fits and only introducing a new prefix if none do. If there are no ' +
+    'existing categories or no clear pattern, use a short Title Case name (1-3 words).';
 
   const userText =
-    `Existing categories: ${existingCategories.length ? existingCategories.join(', ') : '(none yet — propose one)'}\n\n` +
+    `Existing categories: ${existingCategories.length ? existingCategories.slice(0, 150).join(', ') : '(none yet — propose one)'}\n\n` +
     `Tab:\nTitle: ${tab.title}\nURL: ${tab.url}\nSummary: ${tab.summary || '(no summary available)'}`;
 
   let res;
@@ -469,7 +502,16 @@ async function classifyWithAI(tab, existingCategories) {
     if (typeof parsed.category !== 'string' || !parsed.category.trim()) {
       return { error: 'empty category returned' };
     }
-    return { category: parsed.category.trim(), isNew: !!parsed.isNew };
+    let category = parsed.category.trim();
+    // Match the user's existing prefix spelling ("home: X" -> "Home: X") and reuse an exact existing category.
+    const m = category.match(/^([^:]{1,40}):\s*(\S.*)$/);
+    if (m) {
+      const known = prefixPattern(existingCategories).prefixes.find((p) => p.toLowerCase() === m[1].trim().toLowerCase());
+      if (known) category = `${known}: ${m[2].trim()}`;
+    }
+    const exact = existingCategories.find((c) => c.toLowerCase() === category.toLowerCase());
+    if (exact) return { category: exact, isNew: false };
+    return { category, isNew: !!parsed.isNew };
   } catch (e) {
     return { error: 'could not parse model response' };
   }
@@ -606,15 +648,33 @@ function primaryOf(category) {
   return m ? m[1].trim() : null;
 }
 
+// Detects a "Prefix: Name" naming pattern among category names (active when most categories use one).
+function prefixPattern(cats) {
+  const unique = [...new Set(cats.filter((c) => c && c !== SKIPPED))];
+  const counts = {};
+  let prefixed = 0;
+  for (const c of unique) {
+    const p = primaryOf(c);
+    if (p) {
+      counts[p] = (counts[p] || 0) + 1;
+      prefixed++;
+    }
+  }
+  const prefixes = Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b));
+  return { active: prefixed >= 2 && prefixed / unique.length >= 0.5, prefixes };
+}
+
 // Returns a function mapping a link to the window label it should open in (null = the current window).
 // - "Restore windows" off: everything opens in the current window.
 // - "Keep each category in one window" off: each link opens in the window it was saved from.
 // - On (default): "Prefix: Name" categories all go to one window named Prefix, with the categories as tab
-//   groups inside it; categories without a prefix go to the window that held most of their links.
+//   groups inside it. Categories without a prefix go to a window called "Other" when most of the user's
+//   categories use prefixes; otherwise to the window that held most of their links.
 // Always computed from ALL active links so loading a subset behaves the same as loading everything.
 function windowResolver(allLinks) {
   if (settings.restoreWindows === false) return () => null;
   if (settings.keepCategoriesTogether === false) return (l) => l.window || null;
+  const usesPrefixes = prefixPattern(allLinks.map((l) => l.category)).active;
   const counts = {};
   for (const l of allLinks) {
     if (!l.window || primaryOf(l.category)) continue;
@@ -625,7 +685,7 @@ function windowResolver(allLinks) {
   for (const [cat, byWin] of Object.entries(counts)) {
     home[cat] = Object.entries(byWin).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], undefined, { numeric: true }))[0][0];
   }
-  return (l) => primaryOf(l.category) || home[l.category] || l.window || null;
+  return (l) => primaryOf(l.category) || (usesPrefixes ? 'Other' : home[l.category] || l.window || null);
 }
 
 function populateLoadCategorySelect() {
@@ -1128,7 +1188,9 @@ document.getElementById('resetBtn').addEventListener('click', resetAll);
 document.getElementById('categorySelect').addEventListener('change', (e) => {
   document.getElementById('newCategoryInput').hidden = e.target.value !== '__new__';
   if (e.target.value === '__new__') document.getElementById('newCategoryInput').focus();
+  updatePrefixHint();
 });
+document.getElementById('newCategoryInput').addEventListener('input', updatePrefixHint);
 document.getElementById('saveSettingsBtn').addEventListener('click', saveSettingsFromForm);
 for (const [id, key] of [['restoreWindowsCheckbox', 'restoreWindows'], ['keepTogetherCheckbox', 'keepCategoriesTogether']]) {
   document.getElementById(id).addEventListener('change', async (e) => {
