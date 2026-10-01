@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Tabitrail</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 640px; margin: 80px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  #url { word-break: break-all; font-size: 13px; }
+  .muted { color: #6b7280; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1 id="title"></h1>
+  <a id="url" rel="noopener"></a>
+  <p class="muted" id="msg">Tabitrail is holding this tab until you open it. The page loads when you switch to this tab.</p>
+  <script src="lazy.js"></script>
+</body>
+</html>

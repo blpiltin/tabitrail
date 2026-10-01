@@ -118,6 +118,10 @@ browser profile or machine.
 
 **Safety limits.** Opening hundreds of tabs and windows at once can freeze a
 browser or even the whole computer, so Tabitrail protects you:
+- By default (**Don't load pages until I click a tab**) restored tabs open as
+  tiny local placeholders showing the saved title, and are unloaded straight
+  away. No real page loads until you switch to that tab, so hundreds of tabs
+  don't freeze your browser. Untick it to load every page immediately.
 - It asks for confirmation above 12 tabs, stating how many tabs and windows
   it will open.
 - It adds a stronger warning above 150 tabs, and refuses to open more than
@@ -179,6 +183,12 @@ back into that JSON shape, if you ever need to restore from it, would be
 straightforward to add later — just ask.
 
 ## Known limitations
+
+- **Placeholder tabs**: with lazy loading on, an unopened restored tab's address
+  is a `chrome-extension://` placeholder until you click it (then it becomes the
+  real page). If you uninstall Tabitrail, any placeholders still open stop
+  working; the links remain in your digest. Tabitrail's scan also doesn't count
+  a placeholder as an open page until it has loaded.
 
 - **Multiple browser profiles**: extension storage is per-profile, so each
   profile needs the extension loaded separately, and its links live in that

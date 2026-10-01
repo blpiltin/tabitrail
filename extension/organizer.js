@@ -49,6 +49,7 @@ async function loadSettings() {
     recategorizeAllOnScan: false,
     restoreWindows: true,
     keepCategoriesTogether: true,
+    lazyTabs: true,
     ...(data.tabitrailSettings || {})
   };
 }
@@ -803,6 +804,33 @@ async function windowExists(id) {
   }
 }
 
+// Lazy mode: instead of the real URL, open a tiny local placeholder (lazy.html) that shows the saved title and
+// only loads the real page once the tab is viewed. Real pages never start loading, so hundreds of tabs cost
+// almost nothing. The placeholder is then discarded so it uses no memory either.
+function placeholderUrl(link) {
+  return `${chrome.runtime.getURL('lazy.html')}?u=${encodeURIComponent(link.url)}&t=${encodeURIComponent(link.title || link.url)}`;
+}
+
+async function discardWhenReady(ids) {
+  await Promise.all(
+    ids.map(async (id) => {
+      for (let i = 0; i < 40; i++) {
+        try {
+          if ((await chrome.tabs.get(id)).status === 'complete') break; // placeholder finished loading (title set)
+        } catch (e) {
+          return; // tab was closed
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      try {
+        await chrome.tabs.discard(id);
+      } catch (e) {
+        // can't discard: it just stays a tiny local page
+      }
+    })
+  );
+}
+
 // Opens a tab in the window saved for this link (creating that window on first use).
 // A null label means "the current window". winMap maps label -> window id for this load.
 // recreate=false (bulk loads): if the window is gone this throws instead of opening a replacement.
@@ -829,6 +857,8 @@ async function openLinksGrouped(links, onProgress) {
   const labelOf = windowResolver(getActiveLinks());
   const labels = [...new Set(links.map(labelOf))].sort((a, b) => (a === null ? -1 : b === null ? 1 : a.localeCompare(b, undefined, { numeric: true })));
   const winMap = {};
+  const lazy = settings.lazyTabs !== false;
+  let pendingDiscard = [];
   let opened = 0;
   let failures = 0;
 
@@ -849,8 +879,15 @@ async function openLinksGrouped(links, onProgress) {
         if (loadAbort) break;
         const isNewWindow = label && winMap[label] === undefined;
         try {
-          const tab = await openTabInWindow(l.url, label, winMap);
+          const tab = await openTabInWindow(lazy ? placeholderUrl(l) : l.url, label, winMap);
           tabIds.push(tab.id);
+          if (lazy) {
+            pendingDiscard.push(tab.id);
+            if (pendingDiscard.length >= BATCH_SIZE) {
+              await discardWhenReady(pendingDiscard);
+              pendingDiscard = [];
+            }
+          }
           if (groupWindowId === undefined) groupWindowId = tab.windowId;
           opened++;
           failures = 0;
@@ -874,6 +911,10 @@ async function openLinksGrouped(links, onProgress) {
         } catch (e) {
           // tabs are still open even if grouping failed
         }
+      }
+      if (lazy && pendingDiscard.length) {
+        await discardWhenReady(pendingDiscard);
+        pendingDiscard = [];
       }
       if (loadAbort) break outer;
     }
@@ -1187,6 +1228,7 @@ function populateSettingsForm(s) {
   document.getElementById('recategorizeAllCheckbox').checked = !!s.recategorizeAllOnScan;
   document.getElementById('restoreWindowsCheckbox').checked = s.restoreWindows !== false;
   document.getElementById('keepTogetherCheckbox').checked = s.keepCategoriesTogether !== false;
+  document.getElementById('lazyTabsCheckbox').checked = s.lazyTabs !== false;
   document.getElementById('newCategoryBehaviorSelect').value = s.newCategoryBehavior === 'auto' ? 'auto' : 'ask';
 }
 
@@ -1198,6 +1240,7 @@ async function saveSettingsFromForm() {
     recategorizeAllOnScan: document.getElementById('recategorizeAllCheckbox').checked,
     restoreWindows: document.getElementById('restoreWindowsCheckbox').checked,
     keepCategoriesTogether: document.getElementById('keepTogetherCheckbox').checked,
+    lazyTabs: document.getElementById('lazyTabsCheckbox').checked,
     newCategoryBehavior: document.getElementById('newCategoryBehaviorSelect').value
   };
   await saveSettings(newSettings);
@@ -1225,7 +1268,7 @@ document.getElementById('categorySelect').addEventListener('change', (e) => {
 });
 document.getElementById('newCategoryInput').addEventListener('input', updatePrefixHint);
 document.getElementById('saveSettingsBtn').addEventListener('click', saveSettingsFromForm);
-for (const [id, key] of [['restoreWindowsCheckbox', 'restoreWindows'], ['keepTogetherCheckbox', 'keepCategoriesTogether']]) {
+for (const [id, key] of [['restoreWindowsCheckbox', 'restoreWindows'], ['keepTogetherCheckbox', 'keepCategoriesTogether'], ['lazyTabsCheckbox', 'lazyTabs']]) {
   document.getElementById(id).addEventListener('change', async (e) => {
     settings = await loadSettings();
     settings[key] = e.target.checked;
