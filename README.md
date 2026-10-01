@@ -122,6 +122,14 @@ browser or even the whole computer, so Tabitrail protects you:
   tiny local placeholders showing the saved title, and are unloaded straight
   away. No real page loads until you switch to that tab, so hundreds of tabs
   don't freeze your browser. Untick it to load every page immediately.
+- Each tab joins its category's tab group the moment it opens, and Chrome's
+  occasional "Tabs cannot be edited right now" refusals (e.g. while you click
+  around) are retried automatically. If a load does stop early, the status line
+  says why.
+- **Create a tab group for each category** can be turned off. Chrome saves every
+  tab group it creates (and syncs them to your Google account if sync is on), so
+  repeated loads add more and more saved groups; with it off, tabs just open into
+  their windows.
 - It asks for confirmation above 12 tabs, stating how many tabs and windows
   it will open.
 - It adds a stronger warning above 150 tabs, and refuses to open more than

@@ -50,6 +50,7 @@ async function loadSettings() {
     restoreWindows: true,
     keepCategoriesTogether: true,
     lazyTabs: true,
+    groupTabs: true,
     ...(data.tabitrailSettings || {})
   };
 }
@@ -811,6 +812,19 @@ function placeholderUrl(link) {
   return `${chrome.runtime.getURL('lazy.html')}?u=${encodeURIComponent(link.url)}&t=${encodeURIComponent(link.title || link.url)}`;
 }
 
+// Chrome briefly refuses tab edits while the user is clicking or dragging in the tab strip
+// ("Tabs cannot be edited right now"). Retry those instead of treating them as failures.
+async function withRetry(fn) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= 6 || !/cannot be edited|dragging|busy/i.test(e.message || '')) throw e;
+      await new Promise((r) => setTimeout(r, 250 * attempt));
+    }
+  }
+}
+
 async function discardWhenReady(ids) {
   await Promise.all(
     ids.map(async (id) => {
@@ -858,9 +872,18 @@ async function openLinksGrouped(links, onProgress) {
   const labels = [...new Set(links.map(labelOf))].sort((a, b) => (a === null ? -1 : b === null ? 1 : a.localeCompare(b, undefined, { numeric: true })));
   const winMap = {};
   const lazy = settings.lazyTabs !== false;
+  const useGroups = settings.groupTabs !== false;
   let pendingDiscard = [];
   let opened = 0;
   let failures = 0;
+  let lastError = '';
+
+  const flushDiscards = async () => {
+    if (!pendingDiscard.length) return;
+    const ids = pendingDiscard;
+    pendingDiscard = [];
+    await discardWhenReady(ids);
+  };
 
   let firstLabel = true;
   outer: for (const label of labels) {
@@ -873,49 +896,44 @@ async function openLinksGrouped(links, onProgress) {
     const inWindow = links.filter((l) => labelOf(l) === label);
     const cats = [...new Set(inWindow.map((l) => l.category))].sort((a, b) => a.localeCompare(b));
     for (const cat of cats) {
-      const tabIds = [];
-      let groupWindowId;
+      let groupId; // each tab joins its category's group the moment it is created, BEFORE it can be discarded
       for (const l of inWindow.filter((x) => x.category === cat)) {
         if (loadAbort) break;
-        const isNewWindow = label && winMap[label] === undefined;
         try {
-          const tab = await openTabInWindow(lazy ? placeholderUrl(l) : l.url, label, winMap);
-          tabIds.push(tab.id);
-          if (lazy) {
-            pendingDiscard.push(tab.id);
-            if (pendingDiscard.length >= BATCH_SIZE) {
-              await discardWhenReady(pendingDiscard);
-              pendingDiscard = [];
-            }
-          }
-          if (groupWindowId === undefined) groupWindowId = tab.windowId;
+          const tab = await withRetry(() => openTabInWindow(lazy ? placeholderUrl(l) : l.url, label, winMap));
           opened++;
           failures = 0;
+          if (useGroups) {
+            try {
+              if (groupId === undefined) {
+                // Without createProperties.windowId Chrome puts the new group in the CURRENT window, which would
+                // drag these tabs out of the window they were just opened in.
+                groupId = await withRetry(() => chrome.tabs.group({ tabIds: [tab.id], createProperties: { windowId: tab.windowId } }));
+                await withRetry(() => chrome.tabGroups.update(groupId, { title: cat, color: colorForCategory(cat, allCats) }));
+              } else {
+                await withRetry(() => chrome.tabs.group({ tabIds: [tab.id], groupId }));
+              }
+            } catch (e) {
+              lastError = e.message || String(e); // tab stays open, just ungrouped
+            }
+          }
+          if (lazy) {
+            pendingDiscard.push(tab.id);
+            if (pendingDiscard.length >= BATCH_SIZE) await flushDiscards();
+          }
           if (onProgress) onProgress(opened, links.length);
           if (opened % BATCH_SIZE === 0) await pause(BATCH_PAUSE_MS);
         } catch (e) {
+          lastError = e.message || String(e);
           if (label && winMap[label] !== undefined && !(await windowExists(winMap[label]))) {
             loadAbort = loadAbort || 'a window being filled was closed';
           } else if (++failures >= MAX_CONSECUTIVE_FAILURES) {
-            loadAbort = loadAbort || 'too many tabs failed to open in a row';
+            loadAbort = loadAbort || `too many tabs failed to open in a row (last error: ${lastError})`;
           }
           // otherwise: skip links the browser refuses to open (e.g. malformed URL)
         }
       }
-      if (tabIds.length) {
-        try {
-          // Without createProperties.windowId Chrome puts the new group in the CURRENT window, which would
-          // drag these tabs out of the window they were just opened in.
-          const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: groupWindowId } });
-          await chrome.tabGroups.update(groupId, { title: cat, color: colorForCategory(cat, allCats) });
-        } catch (e) {
-          // tabs are still open even if grouping failed
-        }
-      }
-      if (lazy && pendingDiscard.length) {
-        await discardWhenReady(pendingDiscard);
-        pendingDiscard = [];
-      }
+      await flushDiscards();
       if (loadAbort) break outer;
     }
   }
@@ -1229,6 +1247,7 @@ function populateSettingsForm(s) {
   document.getElementById('restoreWindowsCheckbox').checked = s.restoreWindows !== false;
   document.getElementById('keepTogetherCheckbox').checked = s.keepCategoriesTogether !== false;
   document.getElementById('lazyTabsCheckbox').checked = s.lazyTabs !== false;
+  document.getElementById('groupTabsCheckbox').checked = s.groupTabs !== false;
   document.getElementById('newCategoryBehaviorSelect').value = s.newCategoryBehavior === 'auto' ? 'auto' : 'ask';
 }
 
@@ -1241,6 +1260,7 @@ async function saveSettingsFromForm() {
     restoreWindows: document.getElementById('restoreWindowsCheckbox').checked,
     keepCategoriesTogether: document.getElementById('keepTogetherCheckbox').checked,
     lazyTabs: document.getElementById('lazyTabsCheckbox').checked,
+    groupTabs: document.getElementById('groupTabsCheckbox').checked,
     newCategoryBehavior: document.getElementById('newCategoryBehaviorSelect').value
   };
   await saveSettings(newSettings);
@@ -1268,7 +1288,7 @@ document.getElementById('categorySelect').addEventListener('change', (e) => {
 });
 document.getElementById('newCategoryInput').addEventListener('input', updatePrefixHint);
 document.getElementById('saveSettingsBtn').addEventListener('click', saveSettingsFromForm);
-for (const [id, key] of [['restoreWindowsCheckbox', 'restoreWindows'], ['keepTogetherCheckbox', 'keepCategoriesTogether'], ['lazyTabsCheckbox', 'lazyTabs']]) {
+for (const [id, key] of [['restoreWindowsCheckbox', 'restoreWindows'], ['keepTogetherCheckbox', 'keepCategoriesTogether'], ['lazyTabsCheckbox', 'lazyTabs'], ['groupTabsCheckbox', 'groupTabs']]) {
   document.getElementById(id).addEventListener('change', async (e) => {
     settings = await loadSettings();
     settings[key] = e.target.checked;
